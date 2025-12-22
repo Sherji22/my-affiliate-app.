@@ -19,7 +19,7 @@ with st.sidebar:
     st.divider()
     # Allowing model selection in case 1.5 also fails
     model_choice = st.selectbox("Model Strategy", 
-                                ["gemini-1.5-flash", "gemini-2.0-flash-lite"], 
+                            ["gemini-2.5-flash", "gemini-2.5-flash-lite"], 
                                 help="1.5 Flash is most likely to work without a credit card.")
 
 st.title("🚀 SEO Content Master (No-Card Bypass Mode)")
@@ -103,3 +103,4 @@ if st.button("🔥 Generate SEO Package"):
                     st.download_button("💾 Save HTML", blog_html, "article.html", "text/html")
             except Exception as e:
                 st.error(f"Critical System Error: {e}")
+
