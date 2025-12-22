@@ -1,9 +1,10 @@
 import streamlit as st
 import requests
 import re
+import time
+import random
 from bs4 import BeautifulSoup
 from google import genai
-from io import BytesIO
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pro SEO Content Creator", page_icon="📝", layout="wide")
@@ -16,7 +17,7 @@ with st.sidebar:
     search_id = st.text_input("Search Engine ID (CX)", type="password")
     aff_id = st.text_input("Amazon Associate ID", value="mytag-20")
     st.divider()
-    st.info("No Imagen 3 needed. This app uses Gemini 2.0 Flash (Free Tier).")
+    st.info("Using Gemini 2.0 Flash-Lite + Auto-Retry Logic.")
 
 st.title("🚀 One-Click SEO & Affiliate Content Master")
 
@@ -33,16 +34,28 @@ def get_amazon_link(product_name, s_key, s_id, a_id):
         return f"https://www.amazon.com/dp/{asin.group(1)}/?tag={a_id}" if asin else None
     except: return None
 
+def generate_with_retry(client, prompt, model_name="gemini-2.0-flash-lite", max_retries=5):
+    """Generates content with Exponential Backoff retry logic."""
+    for i in range(max_retries):
+        try:
+            return client.models.generate_content(model=model_name, contents=prompt)
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                # Wait: (2^retry * 2 seconds) + some random jitter
+                wait_time = (2 ** i) + (random.randint(1, 1000) / 1000)
+                st.warning(f"Rate limit hit. Retrying in {wait_time:.2f} seconds... (Attempt {i+1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                raise e # If it's a different error, stop immediately
+    raise Exception("Max retries exceeded. Please wait a minute and try again.")
+
 # --- UI SECTIONS ---
 col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("1. Input Method")
     mode = st.radio("Choose source:", ["URL Scraper", "Manual Text Input", "Idea/Topic Only"])
-    
-    source_url = ""
     user_content = ""
-    
     if mode == "URL Scraper":
         source_url = st.text_input("Paste Source URL")
     elif mode == "Manual Text Input":
@@ -60,11 +73,10 @@ if st.button("🔥 Generate Full SEO Package"):
     if not gemini_key:
         st.error("Please provide a Gemini API Key in the sidebar.")
     else:
-        with st.spinner("Analyzing trends and writing content..."):
+        with st.spinner("Analyzing and writing... (This may include auto-retries)"):
             try:
                 client = genai.Client(api_key=gemini_key)
                 
-                # Fetch content if URL mode
                 if mode == "URL Scraper" and source_url:
                     resp = requests.get(source_url, headers={'User-Agent': 'Mozilla/5.0'})
                     soup = BeautifulSoup(resp.text, 'html.parser')
@@ -73,77 +85,52 @@ if st.button("🔥 Generate Full SEO Package"):
                 # --- AI PROMPT ---
                 prompt = f"""
                 Act as an Expert SEO Content Strategist.
-                TOPIC/CONTENT: {user_content if user_content else main_topic}
+                TOPIC: {user_content if user_content else main_topic}
                 INSTRUCTIONS: {extra_instructions}
 
-                TASK: Generate a complete SEO-optimized blog package.
-                
-                1. THREE SEO TITLES: Creative, high-CTR, and AI-Search friendly.
-                2. SEO TAGS: Comma-separated list of 15 keywords.
-                3. BLOG POST: High-quality, EEAT-friendly article in HTML format. 
-                   - Use H1, H2, H3 tags.
-                   - Use bullet points and bold text.
-                   - Include an Amazon affiliate disclosure.
-                   - Add 3 product recommendations as [[PRODUCT: Name]].
-                4. IMAGE PROMPTS: Three detailed text-to-image prompts for this post.
+                TASK: Generate an SEO package with:
+                1. THREE SEO TITLES
+                2. 15 SEO TAGS (comma separated)
+                3. BLOG POST in HTML (H1, H2, H3, bolding, 3x [[PRODUCT: Name]] placeholders)
+                4. THREE IMAGE PROMPTS
 
                 OUTPUT FORMAT:
                 [TITLES]
-                (List 3 titles)
+                (Titles here)
                 [TAGS]
-                (Comma separated tags)
+                (Tags here)
                 [PROMPTS]
-                (List 3 image prompts)
+                (Prompts here)
                 [HTML]
-                (The blog content)
+                (HTML here)
                 """
 
-                response = client.models.generate_content(model="gemini-2.0-flash-lite", contents=prompt)
+                # Using the retry function
+                response = generate_with_retry(client, prompt)
                 full_text = response.text
 
-                # --- PARSING RESULTS ---
+                # --- PARSING ---
                 titles = re.search(r"\[TITLES\](.*?)\[TAGS\]", full_text, re.S).group(1).strip()
                 tags = re.search(r"\[TAGS\](.*?)\[PROMPTS\]", full_text, re.S).group(1).strip()
                 img_prompts = re.search(r"\[PROMPTS\](.*?)\[HTML\]", full_text, re.S).group(1).strip()
                 blog_html = re.search(r"\[HTML\](.*)", full_text, re.S).group(1).strip()
 
-                # --- PRODUCT LINK INJECTION ---
+                # --- LINK INJECTION ---
                 found_products = re.findall(r'\[\[PRODUCT:\s*(.*?)\]\]', blog_html)
                 for p in found_products:
                     link = get_amazon_link(p, search_key, search_id, aff_id)
                     if link:
-                        blog_html = blog_html.replace(f"[[PRODUCT: {p}]]", f'<a href="{link}" target="_blank" style="color: #FF9900; font-weight: bold;">{p} (View on Amazon)</a>')
-                    else:
-                        blog_html = blog_html.replace(f"[[PRODUCT: {p}]]", f"<strong>{p}</strong>")
+                        blog_html = blog_html.replace(f"[[PRODUCT: {p}]]", f'<a href="{link}" target="_blank" style="color:#FF9900; font-weight:bold;">{p}</a>')
 
                 # --- DISPLAY ---
-                st.success("✅ Content Generated Successfully!")
-                
                 tabs = st.tabs(["📄 Blog Preview", "📈 SEO & Metadata", "🎨 Image Prompts"])
-                
-                with tabs[0]:
-                    st.markdown(blog_html, unsafe_allow_html=True)
-                
+                with tabs[0]: st.markdown(blog_html, unsafe_allow_html=True)
                 with tabs[1]:
-                    st.subheader("SEO Friendly Titles")
-                    st.code(titles)
-                    st.subheader("SEO Tags")
-                    st.code(tags)
-                
-                with tabs[2]:
-                    st.subheader("Text-to-Image Prompts")
-                    st.info("Copy these into Midjourney, Leonardo, or Canva AI.")
-                    st.write(img_prompts)
+                    st.write("**Titles:**", titles)
+                    st.write("**Tags:**", tags)
+                with tabs[2]: st.write(img_prompts)
 
-                # --- DOWNLOAD ---
-                final_output = f"\n\n{blog_html}"
-                st.download_button(
-                    label="💾 Download .html File",
-                    data=final_output,
-                    file_name="blog_post.html",
-                    mime="text/html"
-                )
+                st.download_button("💾 Download .html", blog_html, "post.html", "text/html")
 
             except Exception as e:
-                st.error(f"Error: {e}")
-
+                st.error(f"Final Error: {e}")
