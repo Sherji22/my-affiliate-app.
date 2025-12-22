@@ -98,7 +98,7 @@ if st.button("🔥 Generate Full SEO Package"):
                 (The blog content)
                 """
 
-                response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+                response = client.models.generate_content(model="gemini-2.0-flash-lite", contents=prompt)
                 full_text = response.text
 
                 # --- PARSING RESULTS ---
@@ -146,3 +146,4 @@ if st.button("🔥 Generate Full SEO Package"):
 
             except Exception as e:
                 st.error(f"Error: {e}")
+
